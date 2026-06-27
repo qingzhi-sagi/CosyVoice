@@ -14,6 +14,7 @@
 import os
 import sys
 import argparse
+import tempfile
 import logging
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 from fastapi import FastAPI, UploadFile, Form, File
@@ -37,10 +38,25 @@ app.add_middleware(
     allow_headers=["*"])
 
 
-def generate_data(model_output):
-    for i in model_output:
-        tts_audio = (i['tts_speech'].numpy() * (2 ** 15)).astype(np.int16).tobytes()
-        yield tts_audio
+def generate_data(model_output, cleanup_path=None):
+    try:
+        for i in model_output:
+            tts_audio = (i['tts_speech'].numpy() * (2 ** 15)).astype(np.int16).tobytes()
+            yield tts_audio
+    finally:
+        if cleanup_path and os.path.exists(cleanup_path):
+            os.unlink(cleanup_path)
+
+
+def _save_upload(upload_file: UploadFile) -> str:
+    """Save uploaded WAV to a temp file. Returns the file path.
+
+    inference_zero_shot/inference_cross_lingual/inference_instruct2
+    internally call load_wav() which requires a file path (not in-memory data).
+    """
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+        tmp.write(upload_file.file.read())
+        return tmp.name
 
 
 @app.get("/inference_sft")
@@ -53,17 +69,17 @@ async def inference_sft(tts_text: str = Form(), spk_id: str = Form()):
 @app.get("/inference_zero_shot")
 @app.post("/inference_zero_shot")
 async def inference_zero_shot(tts_text: str = Form(), prompt_text: str = Form(), prompt_wav: UploadFile = File()):
-    prompt_speech_16k = load_wav(prompt_wav.file, 16000)
-    model_output = cosyvoice.inference_zero_shot(tts_text, prompt_text, prompt_speech_16k)
-    return StreamingResponse(generate_data(model_output))
+    tmp_path = _save_upload(prompt_wav)
+    model_output = cosyvoice.inference_zero_shot(tts_text, prompt_text, tmp_path)
+    return StreamingResponse(generate_data(model_output, tmp_path))
 
 
 @app.get("/inference_cross_lingual")
 @app.post("/inference_cross_lingual")
 async def inference_cross_lingual(tts_text: str = Form(), prompt_wav: UploadFile = File()):
-    prompt_speech_16k = load_wav(prompt_wav.file, 16000)
-    model_output = cosyvoice.inference_cross_lingual(tts_text, prompt_speech_16k)
-    return StreamingResponse(generate_data(model_output))
+    tmp_path = _save_upload(prompt_wav)
+    model_output = cosyvoice.inference_cross_lingual(tts_text, tmp_path)
+    return StreamingResponse(generate_data(model_output, tmp_path))
 
 
 @app.get("/inference_instruct")
@@ -76,9 +92,9 @@ async def inference_instruct(tts_text: str = Form(), spk_id: str = Form(), instr
 @app.get("/inference_instruct2")
 @app.post("/inference_instruct2")
 async def inference_instruct2(tts_text: str = Form(), instruct_text: str = Form(), prompt_wav: UploadFile = File()):
-    prompt_speech_16k = load_wav(prompt_wav.file, 16000)
-    model_output = cosyvoice.inference_instruct2(tts_text, instruct_text, prompt_speech_16k)
-    return StreamingResponse(generate_data(model_output))
+    tmp_path = _save_upload(prompt_wav)
+    model_output = cosyvoice.inference_instruct2(tts_text, instruct_text, tmp_path)
+    return StreamingResponse(generate_data(model_output, tmp_path))
 
 
 if __name__ == '__main__':
