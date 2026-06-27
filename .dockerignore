@@ -1,0 +1,16 @@
+.git
+pretrained_models
+asset
+examples
+tools
+.github
+*.md
+LICENSE
+__pycache__
+*.pyc
+.idea
+.vscode
+*.wav
+*.mp3
+*.png
+*.jpg
